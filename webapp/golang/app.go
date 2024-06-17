@@ -53,7 +53,7 @@ type Post struct {
 	CreatedAt    time.Time `db:"created_at"`
 	CommentCount int
 	Comments     []Comment
-	User         User
+	User         User `db:"u"`
 	CSRFToken    string
 }
 
@@ -169,6 +169,59 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 		session.Save(r, w)
 		return value.(string)
 	}
+}
+
+func makePostsAlreadyUser(results []Post, csrfToken string, allComments bool) ([]Post, error) {
+	var posts []Post
+
+	for _, p := range results {
+		err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		// query := "SELECT id, comment, u.id FROM `comments` WHERE `post_id` = ? JOIN `users` AS u ON user_id=u.id ORDER BY `created_at` DESC"
+		query := "SELECT * FROM `comments` WHERE `post_id` = ? ORDER BY `created_at` DESC"
+
+		if !allComments {
+			query += " LIMIT 3"
+		}
+		var comments []Comment
+		err = db.Select(&comments, query, p.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		for i := 0; i < len(comments); i++ {
+			err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		// reverse
+		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
+			comments[i], comments[j] = comments[j], comments[i]
+		}
+
+		p.Comments = comments
+
+		// err = db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
+		// if err != nil {
+		// 	return nil, err
+		// }
+
+		p.CSRFToken = csrfToken
+
+		if p.User.DelFlg == 0 {
+			posts = append(posts, p)
+		}
+		if len(posts) >= postsPerPage {
+			break
+		}
+	}
+
+	return posts, nil
 }
 
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
@@ -384,17 +437,31 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
+	// results := []Post{}
 	results := []Post{}
 
-	// err := db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` JOIN `users` ON `posts.user_id` = `users.id` ORDER BY `created_at` DESC")
-	err := db.Select(&results, "SELECT posts.`id`, `user_id`, `body`, `mime`, posts.`created_at` FROM `posts` JOIN `users` ON posts.`user_id` = users.`id` WHERE users.`del_flg`=0 ORDER BY `created_at` DESC LIMIT 20")
+	query :=
+		"SELECT p.id, p.user_id, p.body, p.mime, p.created_at, u.account_name FROM posts AS p " +
+			"JOIN users AS u ON p.user_id = u.id " +
+			"WHERE u.del_flg=0 " +
+			"ORDER BY p.created_at DESC LIMIT 20"
+
+	//err := db.Select(&results, "SELECT posts.`id`, `user_id`, `body`, `mime`, posts.`created_at` FROM `posts` JOIN `users` ON posts.`user_id` = users.`id` WHERE users.`del_flg`=0 ORDER BY `created_at` DESC LIMIT 20")
+	err := db.Select(&results, query)
+
+	// ID          int       `db:"id"`
+	// AccountName string    `db:"account_name"`
+	// Passhash    string    `db:"passhash"`
+	// Authority   int       `db:"authority"`
+	// DelFlg      int       `db:"del_flg"`
+	// CreatedAt   time.Time `db:"created_at"`
 
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	posts, err := makePosts(results, getCSRFToken(r), false)
+	posts, err := makePostsAlreadyUser(results, getCSRFToken(r), false)
 	if err != nil {
 		log.Print(err)
 		return
