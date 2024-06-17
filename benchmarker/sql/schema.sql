@@ -28,3 +28,6 @@ CREATE TABLE comments (
   `comment` text NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE comments ADD INDEX post_id_idx(post_id);
+ALTER TABLE posts ADD INDEX posts(created_at);
